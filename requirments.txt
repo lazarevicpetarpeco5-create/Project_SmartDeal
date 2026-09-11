@@ -1,3 +1,0 @@
-PySide6 → our desktop GUI. This gives us windows, buttons, text boxes, layouts, etc.
-Pydantic → defines and validates the structured AI analysis we receive.
-python-dotenv → safely loads the API key from .env without hardcoding it into Python.
