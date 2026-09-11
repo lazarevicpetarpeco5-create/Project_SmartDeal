@@ -1,9 +1,10 @@
 # Virtual environment
 .venv/
 
-# Environment variables / secrets
+# Environment variables & local configuration with API keys (KRITIČNO)
 .env
 .env.*
+config.json
 
 # Python cache
 __pycache__/
@@ -16,7 +17,10 @@ __pycache__/
 # OS files
 .DS_Store
 
-# Build / generated files
+# Build / generated files (PyInstaller)
 dist/
 build/
 *.log
+
+# Generated PDF reports
+*.pdf
