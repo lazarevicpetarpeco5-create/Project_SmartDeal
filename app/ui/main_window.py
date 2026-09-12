@@ -1,494 +1,296 @@
-import json
 import os
-import platform
-import subprocess
-from datetime import datetime
-
+import json
 import requests
-from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog,
-    QFileDialog,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QSplitter,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
+    QTextEdit, QLabel, QPushButton, QMessageBox, QFileDialog,
+    QDialog, QFormLayout, QLineEdit
 )
-
-from app.models.analysis import AnalysisResult
+from PySide6.QtCore import Qt
 from app.services.ai_service import AIService
-
-CONFIG_FILE = "config.json"
-
-
-def load_config():
-    """Naloži nastavitve iz config.json ali vrne privzete."""
-    default_config = {
-        "crm_api_url": "https://httpbin.org/post",
-        "crm_api_key": "demo_key",
-        "openai_api_key": "",
-    }
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                default_config.update(config)
-        except Exception:
-            pass
-    return default_config
+from app.models.analysis import AnalysisResult
 
 
-def save_config(config_data):
-    """Shrani nastavitve v config.json."""
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, indent=4)
+TELECOM_STYLESHEET = """
+/* Glavno okno in ozadje */
+QMainWindow, QDialog {
+    background-color: #F0F4F8;
+    color: #1A252C;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+/* Oznake (Labels) */
+QLabel {
+    color: #0A3D62;
+    font-size: 13px;
+}
+
+/* Vnosna polja za besedilo */
+QTextEdit, QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #B0C4DE;
+    border-radius: 6px;
+    padding: 8px;
+    color: #1A252C;
+    font-size: 13px;
+    selection-background-color: #38ADA9;
+}
+
+QTextEdit:focus, QLineEdit:focus {
+    border: 1px solid #1B4F72;
+    background-color: #FFFFFF;
+}
+
+/* Glavni gumb za AI Analizo */
+QPushButton#btn_analyze {
+    background-color: #0A3D62;
+    color: #FFFFFF;
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+QPushButton#btn_analyze:hover {
+    background-color: #1B4F72;
+}
+
+QPushButton#btn_analyze:pressed {
+    background-color: #0C2461;
+}
+
+/* Sekundarni gumbi (CRM, PDF, Nastavitve) */
+QPushButton {
+    background-color: #E1E8ED;
+    color: #0A3D62;
+    font-weight: 600;
+    font-size: 12px;
+    border: 1px solid #B0C4DE;
+    border-radius: 6px;
+    padding: 7px 14px;
+}
+
+QPushButton:hover {
+    background-color: #D4E1ED;
+    border-color: #0A3D62;
+}
+
+QPushButton:pressed {
+    background-color: #B0C4DE;
+}
+"""
 
 
 class SettingsDialog(QDialog):
-    """Dialog okno za nastavljanje API ključev in CRM vmesnika."""
-
-    def __init__(self, parent=None):
+    """Dialog za nastavljanje API ključev in CRM končne točke."""
+    def __init__(self, config: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Nastavitve API in CRM Povezave")
-        self.setFixedSize(450, 250)
+        self.config = config
+        self.setWindowTitle("Nastavitve sistema")
+        self.resize(450, 220)
+        self.setStyleSheet(TELECOM_STYLESHEET)
 
-        config = load_config()
+        layout = QFormLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
 
-        layout = QVBoxLayout(self)
+        self.txt_openai_key = QLineEdit(self.config.get("OPENAI_API_KEY", ""))
+        self.txt_openai_key.setEchoMode(QLineEdit.Password)
+        self.txt_openai_key.setPlaceholderText("Pusti prazno ali 'MOCK' za testni način")
 
-        form_layout = QFormLayout()
-        form_layout.setSpacing(12)
+        self.txt_crm_url = QLineEdit(self.config.get("CRM_API_URL", ""))
+        self.txt_crm_key = QLineEdit(self.config.get("CRM_API_KEY", ""))
+        self.txt_crm_key.setEchoMode(QLineEdit.Password)
 
-        self.crm_url_input = QLineEdit(config.get("crm_api_url", ""))
-        self.crm_key_input = QLineEdit(config.get("crm_api_key", ""))
-        self.openai_key_input = QLineEdit(config.get("openai_api_key", ""))
-        self.openai_key_input.setEchoMode(QLineEdit.Password)
+        layout.addRow(QLabel("<b>OpenAI API Ključ:</b>"), self.txt_openai_key)
+        layout.addRow(QLabel("<b>CRM API URL:</b>"), self.txt_crm_url)
+        layout.addRow(QLabel("<b>CRM API Ključ:</b>"), self.txt_crm_key)
 
-        form_layout.addRow(QLabel("CRM API URL:"), self.crm_url_input)
-        form_layout.addRow(QLabel("CRM API Ključ:"), self.crm_key_input)
-        form_layout.addRow(
-            QLabel("OpenAI API Ključ:"), self.openai_key_input
-        )
+        self.btn_save = QPushButton("Shrani nastavitve")
+        self.btn_save.clicked.connect(self.save_settings)
+        layout.addRow(self.btn_save)
 
-        layout.addLayout(form_layout)
+    def save_settings(self):
+        self.config["OPENAI_API_KEY"] = self.txt_openai_key.text().strip()
+        self.config["CRM_API_URL"] = self.txt_crm_url.text().strip()
+        self.config["CRM_API_KEY"] = self.txt_crm_key.text().strip()
 
-        # Gumbi za shranjevanje / preklic
-        btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Shrani")
-        cancel_btn = QPushButton("Preklic")
-
-        save_btn.setStyleSheet(
-            "background-color: #16a34a; color: white; font-weight: bold; padding:"
-            " 6px 12px; border-radius: 4px;"
-        )
-        cancel_btn.setStyleSheet(
-            "background-color: #64748b; color: white; padding: 6px 12px;"
-            " border-radius: 4px;"
-        )
-
-        save_btn.clicked.connect(self.save)
-        cancel_btn.clicked.connect(self.reject)
-
-        btn_layout.addStretch()
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(save_btn)
-
-        layout.addLayout(btn_layout)
-
-    def save(self):
-        new_config = {
-            "crm_api_url": self.crm_url_input.text().strip(),
-            "crm_api_key": self.crm_key_input.text().strip(),
-            "openai_api_key": self.openai_key_input.text().strip(),
-        }
-        save_config(new_config)
-
-        # Če je vpisan OpenAI ključ, ga nastavimo tudi v okolju
-        if new_config["openai_api_key"]:
-            os.environ["OPENAI_API_KEY"] = new_config["openai_api_key"]
-
-        QMessageBox.information(
-            self, "Uspeh", "Nastavitve so bile uspešno shranjene!"
-        )
-        self.accept()
-
-
-class AnalysisThread(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, transcript: str):
-        super().__init__()
-        self.transcript = transcript
-
-    def run(self):
         try:
-            config = load_config()
-            api_key = config.get("openai_api_key") or os.getenv(
-                "OPENAI_API_KEY"
-            )
-            service = AIService(api_key=api_key)
-            result = service.analyze(self.transcript)
-            self.finished.emit(result)
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=4)
+            QMessageBox.information(self, "Uspeh", "Nastavitve so bile uspešno shranjene v config.json!")
+            self.accept()
         except Exception as e:
-            self.error.emit(str(e))
+            QMessageBox.critical(self, "Napaka", f"Shranjevanje nastavitev ni uspelo: {str(e)}")
 
 
 class MainWindow(QMainWindow):
-
-    def __init__(self):
+    def __init__(self, config: dict):
         super().__init__()
-        self.setWindowTitle("SmartDeal - Human-in-the-Loop AI Asistent")
-        self.resize(1200, 800)
-        self.showMaximized()
+        self.config = config
+        self.setWindowTitle("SmartDeal - AI Obdelava Sestankov")
+        self.resize(1180, 820)
+        self.setStyleSheet(TELECOM_STYLESHEET)
+        self.init_ui()
 
-        self.last_generated_pdf = None
-
-        # Nastavitev privzete OpenAI tipke iz konfiguracije (če obstaja)
-        config = load_config()
-        if config.get("openai_api_key"):
-            os.environ["OPENAI_API_KEY"] = config["openai_api_key"]
-
-        self.default_pdf_dir = os.path.join(
-            os.path.expanduser("~"), "Dokumenti"
-        )
-        if not os.path.exists(self.default_pdf_dir):
-            self.default_pdf_dir = os.path.expanduser("~")
-
+    def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        central_widget.setStyleSheet(
-            "QWidget { background-color: #cbd5e1; }"
-        )
-
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(25, 20, 25, 20)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(15)
 
-        # --- ZGORNJA VRSTICA: Naslov + Nastavitve + Mapa za PDF ---
-        top_header_layout = QHBoxLayout()
+        # --- LEVI PANEL: Transkript ---
+        left_layout = QVBoxLayout()
+        
+        top_bar = QHBoxLayout()
+        lbl_left_title = QLabel("<b>VNOS TRANSKRIPTA SESTANKA:</b>")
+        lbl_left_title.setStyleSheet("font-size: 14px; color: #0A3D62;")
+        top_bar.addWidget(lbl_left_title)
+        
+        self.btn_settings = QPushButton("⚙ Nastavitve (API / CRM)")
+        self.btn_settings.clicked.connect(self.open_settings)
+        top_bar.addWidget(self.btn_settings)
+        left_layout.addLayout(top_bar)
 
-        title = QLabel("SmartDeal: AI Validacija Transkriptov & CRM Gateway")
-        title.setStyleSheet(
-            "font-size: 22px; font-weight: bold; color: #16a34a;"
-        )
+        self.txt_transcript = QTextEdit()
+        self.txt_transcript.setPlaceholderText("Prilepite transkript ali uvozite datoteko sestanka...")
+        left_layout.addWidget(self.txt_transcript)
 
-        # Gumb za nastavitve
-        settings_btn = QPushButton("⚙ Nastavitve API/CRM")
-        settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0f172a;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #1e293b; }
-        """)
+        self.btn_analyze = QPushButton("⚡ Analiziraj z AI (gpt-4o-mini)")
+        self.btn_analyze.setObjectName("btn_analyze")
+        self.btn_analyze.clicked.connect(self.handle_analysis)
+        left_layout.addWidget(self.btn_analyze)
 
-        # Nadzorna plošča za pot shranjevanja PDF
-        folder_container = QWidget()
-        folder_layout = QHBoxLayout(folder_container)
-        folder_layout.setContentsMargins(0, 0, 0, 0)
-        folder_layout.setSpacing(8)
+        # --- DESNI PANEL: Human-in-the-Loop Urejanje ---
+        right_layout = QVBoxLayout()
+        lbl_right_title = QLabel("<b>PREGLED IN UREJANJE PODATKOV (Human-in-the-Loop):</b>")
+        lbl_right_title.setStyleSheet("font-size: 14px; color: #0A3D62;")
+        right_layout.addWidget(lbl_right_title)
 
-        folder_label = QLabel("Mapa za PDF:")
-        folder_label.setStyleSheet(
-            "font-size: 13px; font-weight: bold; color: #334155;"
-        )
+        right_layout.addWidget(QLabel("1. Povzetek sestanka:"))
+        self.edit_summary = QTextEdit()
+        right_layout.addWidget(self.edit_summary)
 
-        self.folder_path_input = QLineEdit(self.default_pdf_dir)
-        self.folder_path_input.setReadOnly(True)
-        self.folder_path_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #ffffff;
-                border: 1px solid #94a3b8;
-                border-radius: 6px;
-                padding: 5px 10px;
-                font-size: 12px;
-                color: #0f172a;
-                min-width: 180px;
-            }
-        """)
+        right_layout.addWidget(QLabel("2. Zahteve in potrebe stranke:"))
+        self.edit_requirements = QTextEdit()
+        right_layout.addWidget(self.edit_requirements)
 
-        change_folder_btn = QPushButton("Spremeni...")
-        change_folder_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #475569;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #334155; }
-        """)
+        right_layout.addWidget(QLabel("3. Naslednji koraki in ODGOVORNE OSEBE:"))
+        self.edit_action_items = QTextEdit()
+        right_layout.addWidget(self.edit_action_items)
 
-        folder_layout.addWidget(folder_label)
-        folder_layout.addWidget(self.folder_path_input)
-        folder_layout.addWidget(change_folder_btn)
+        right_layout.addWidget(QLabel("4. Osnutek Follow-up sporočila za stranko:"))
+        self.edit_follow_up = QTextEdit()
+        right_layout.addWidget(self.edit_follow_up)
 
-        top_header_layout.addWidget(title)
-        top_header_layout.addStretch()
-        top_header_layout.addWidget(settings_btn)
-        top_header_layout.addWidget(folder_container)
+        # Gumbi na dnu
+        btn_layout = QHBoxLayout()
+        self.btn_crm = QPushButton("📤 Pošlji v CRM API")
+        self.btn_crm.clicked.connect(self.handle_send_crm)
+        
+        self.btn_pdf = QPushButton("📄 Izvozi v PDF")
+        self.btn_pdf.clicked.connect(self.handle_export_pdf)
 
-        main_layout.addLayout(top_header_layout)
+        btn_layout.addWidget(self.btn_crm)
+        btn_layout.addWidget(self.btn_pdf)
+        right_layout.addLayout(btn_layout)
 
-        # --- OSREDNJI DEL: Splitter ---
-        splitter = QSplitter(Qt.Horizontal)
-
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-
-        left_label = QLabel("Vhodni Transkript Sestanka:")
-        left_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #1e293b;"
-        )
-        self.transcript_input = QTextEdit()
-        self.transcript_input.setPlaceholderText(
-            "Vlepite transkript pogovora ali uvozite .txt/.md datoteko..."
-        )
-        self.transcript_input.setStyleSheet("""
-            QTextEdit {
-                background-color: #ffffff; border: 1px solid #94a3b8;
-                border-radius: 8px; padding: 12px; font-size: 14px; color: #0f172a;
-            }
-        """)
-        left_layout.addWidget(left_label)
-        left_layout.addWidget(self.transcript_input)
-
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-
-        right_label = QLabel("Strukturirani Podatki (Pregled & Validacija):")
-        right_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #1e293b;"
-        )
-        self.result_output = QTextEdit()
-        self.result_output.setPlaceholderText(
-            "Rezultat analize se bo prikazal tukaj. Pred pošiljanjem v CRM lahko"
-            " podatke ročno urejate..."
-        )
-        self.result_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #ffffff; border: 1px solid #94a3b8;
-                border-radius: 8px; padding: 12px; font-size: 14px; color: #0f172a;
-            }
-        """)
-        right_layout.addWidget(right_label)
-        right_layout.addWidget(self.result_output)
-
-        splitter.addWidget(left_widget)
-        splitter.addWidget(right_widget)
-        splitter.setSizes([500, 700])
-        main_layout.addWidget(splitter)
-
-        # --- SPODNJI GUMBI ---
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)
-
-        import_btn = QPushButton("Uvozi Datoteko")
-        self.analyze_btn = QPushButton("Analiziraj z AI")
-        export_pdf_btn = QPushButton("Izvozi v PDF")
-        self.open_file_btn = QPushButton("Odpri PDF")
-        sync_crm_btn = QPushButton("Potrdi in Pošlji v CRM")
-
-        button_style = """
-            QPushButton {
-                background-color: #2563eb; color: white; border: none;
-                border-radius: 6px; padding: 10px 14px; font-size: 13px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #1d4ed8; }
-        """
-        action_style = """
-            QPushButton {
-                background-color: #0284c7; color: white; border: none;
-                border-radius: 6px; padding: 10px 14px; font-size: 13px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #0369a1; }
-        """
-        sync_style = """
-            QPushButton {
-                background-color: #16a34a; color: white; border: none;
-                border-radius: 6px; padding: 10px 14px; font-size: 13px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #15803d; }
-        """
-
-        import_btn.setStyleSheet(button_style)
-        self.analyze_btn.setStyleSheet(button_style)
-        export_pdf_btn.setStyleSheet(action_style)
-        self.open_file_btn.setStyleSheet(action_style)
-        sync_crm_btn.setStyleSheet(sync_style)
-
-        button_layout.addWidget(import_btn)
-        button_layout.addWidget(self.analyze_btn)
-        button_layout.addWidget(export_pdf_btn)
-        button_layout.addWidget(self.open_file_btn)
-        button_layout.addWidget(sync_crm_btn)
-
-        main_layout.addLayout(button_layout)
-
-        # Povezave akcij
-        settings_btn.clicked.connect(self.open_settings)
-        change_folder_btn.clicked.connect(self.select_storage_folder)
-        import_btn.clicked.connect(self.import_file)
-        self.analyze_btn.clicked.connect(self.analyze_transcript)
-        export_pdf_btn.clicked.connect(self.export_to_pdf)
-        self.open_file_btn.clicked.connect(self.open_pdf)
-        sync_crm_btn.clicked.connect(self.sync_to_crm)
+        main_layout.addLayout(left_layout, stretch=1)
+        main_layout.addLayout(right_layout, stretch=1)
 
     def open_settings(self):
-        dialog = SettingsDialog(self)
+        dialog = SettingsDialog(self.config, self)
         dialog.exec()
 
-    def select_storage_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self, "Izberi mapo za shranjevanje PDF poročil", self.default_pdf_dir
-        )
-        if folder:
-            self.default_pdf_dir = folder
-            self.folder_path_input.setText(folder)
-
-    def import_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Odpri transkript", "", "Besedilne datoteke (*.txt *.md)"
-        )
-        if path:
-            with open(path, "r", encoding="utf-8") as f:
-                self.transcript_input.setText(f.read())
-
-    def analyze_transcript(self):
-        text = self.transcript_input.toPlainText()
-        if not text.strip():
-            QMessageBox.warning(
-                self, "Opozorilo", "Vnesite ali uvozite besedilo za analizo."
-            )
+    def handle_analysis(self):
+        text = self.txt_transcript.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Opozorilo", "Prosimo, vnesite transkript sestanka.")
             return
 
-        self.analyze_btn.setEnabled(False)
-        self.analyze_btn.setText("Analiziram...")
-
-        self.thread = AnalysisThread(text)
-        self.thread.finished.connect(self.on_analysis_success)
-        self.thread.error.connect(self.on_analysis_error)
-        self.thread.start()
-
-    def on_analysis_success(self, result: AnalysisResult):
-        self.analyze_btn.setEnabled(True)
-        self.analyze_btn.setText("Analiziraj z AI")
-
-        needs_formatted = "\n".join(
-            [f"- {need}" for need in result.customer_needs]
-        )
-        formatted_text = (
-            f"POVZETEK:\n{result.summary}\n\n"
-            f"ODNOS STRANKE:\n{result.customer_sentiment}\n\n"
-            f"GLAVNA TEŽAVA:\n{result.main_issue}\n\n"
-            f"POTREBE STRANKE:\n{needs_formatted}\n\n"
-            f"PRIPOROČEN UKREP:\n{result.recommended_action}"
-        )
-        self.result_output.setText(formatted_text)
-
-    def on_analysis_error(self, err_msg: str):
-        self.analyze_btn.setEnabled(True)
-        self.analyze_btn.setText("Analiziraj z AI")
-        QMessageBox.critical(
-            self, "Napaka", f"Prišlo je do napake pri analizi: {err_msg}"
-        )
-
-    def export_to_pdf(self):
-        content = self.result_output.toPlainText().strip()
-        if not content:
-            QMessageBox.warning(self, "Opozorilo", "Ni vsebine za izvoz v PDF.")
-            return
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"SmartDeal_Porocilo_{timestamp}.pdf"
-        full_path = os.path.join(self.default_pdf_dir, filename)
+        api_key = self.config.get("OPENAI_API_KEY", "")
 
         try:
-            config = load_config()
-            service = AIService(api_key=config.get("openai_api_key"))
-            service.generate_pdf(content, full_path)
-            self.last_generated_pdf = full_path
-            QMessageBox.information(
-                self,
-                "Uspeh",
-                f"PDF dokument je bil uspešno ustvarjen in shranjen v:\n{full_path}",
-            )
+            ai_service = AIService(api_key=api_key)
+            result: AnalysisResult = ai_service.analyze_transcript(text)
+
+            self.edit_summary.setText(result.summary)
+            self.edit_requirements.setText(result.client_requirements)
+            self.edit_action_items.setText(result.action_items)
+            self.edit_follow_up.setText(result.follow_up_email)
+
+            QMessageBox.information(self, "Uspeh", "Analiza uspešno opravljena! Preglejte in po potrebi uredite izluščene podatke.")
         except Exception as e:
-            QMessageBox.critical(
-                self, "Napaka", f"Napaka pri ustvarjanju PDF: {e}"
-            )
+            QMessageBox.critical(self, "Napaka pri obdelavi", f"Prišlo je do napake pri AI analizi:\n{str(e)}")
 
-    def open_pdf(self):
-        if (
-            not self.last_generated_pdf
-            or not os.path.exists(self.last_generated_pdf)
-        ):
-            QMessageBox.warning(
-                self,
-                "Opozorilo",
-                "Najprej izvozite PDF datoteko ali preverite izbrano mapo.",
-            )
+    def get_current_data(self) -> AnalysisResult:
+        return AnalysisResult(
+            summary=self.edit_summary.toPlainText(),
+            client_requirements=self.edit_requirements.toPlainText(),
+            action_items=self.edit_action_items.toPlainText(),
+            follow_up_email=self.edit_follow_up.toPlainText()
+        )
+
+    def handle_send_crm(self):
+        crm_url = self.config.get("CRM_API_URL", "")
+        crm_key = self.config.get("CRM_API_KEY", "")
+
+        if not crm_url:
+            QMessageBox.warning(self, "Opozorilo", "CRM API URL ni nastavljen. Vnesite ga v nastavitvah.")
             return
 
-        if platform.system() == "Linux":
-            subprocess.run(["xdg-open", self.last_generated_pdf])
-        elif platform.system() == "Windows":
-            os.startfile(self.last_generated_pdf)
-        elif platform.system() == "Darwin":
-            subprocess.run(["open", self.last_generated_pdf])
-
-    def sync_to_crm(self):
-        content = self.result_output.toPlainText().strip()
-        if not content:
-            QMessageBox.warning(
-                self, "Opozorilo", "Ni preverjenih podatkov za pošiljanje."
-            )
-            return
-
-        config = load_config()
-        crm_url = config.get("crm_api_url")
-        crm_key = config.get("crm_api_key")
-
+        data = self.get_current_data()
         headers = {
             "Authorization": f"Bearer {crm_key}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json"
         }
-        payload = {"data": content, "source": "SmartDeal Desktop App"}
 
         try:
-            response = requests.post(
-                crm_url, json=payload, headers=headers, timeout=5
-            )
-            if response.status_code in [200, 201]:
-                QMessageBox.information(
-                    self,
-                    "Uspeh",
-                    f"Podatki so bili uspešno poslani na CRM:\n{crm_url}",
-                )
+            response = requests.post(crm_url, json=data.to_dict(), headers=headers, timeout=5)
+            if response.status_code in (200, 201):
+                QMessageBox.information(self, "CRM Sinhronizacija", "Podatki so bili uspešno poslani v CRM sistem!")
             else:
-                QMessageBox.critical(
-                    self,
-                    "Napaka CRM",
-                    f"CRM strežnik je vrnil status kodo: {response.status_code}",
-                )
+                QMessageBox.warning(self, "CRM Napaka", f"Strežnik je vrnil status {response.status_code}: {response.text}")
         except Exception as e:
-            QMessageBox.critical(
-                self, "Napaka Povezave", f"Ne morem se povezati s CRM: {e}"
-            )
+            QMessageBox.critical(self, "Napaka pri povezavi", f"Pošiljanje v CRM ni uspelo:\n{str(e)}")
+
+    def handle_export_pdf(self):
+        data = self.get_current_data()
+        file_path, _ = QFileDialog.getSaveFileName(self, "Shrani PDF poročilo", "SmartDeal_Porocilo.pdf", "PDF Datoteke (*.pdf)")
+        
+        if not file_path:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
+
+            c = canvas.Canvas(file_path, pagesize=letter)
+            text_object = c.beginText(40, 750)
+            text_object.setFont("Helvetica-Bold", 14)
+            text_object.textLine("SmartDeal - Poročilo o Sestanku")
+            text_object.setFont("Helvetica", 10)
+            text_object.textLine("")
+
+            sections = [
+                ("POVZETEK SESTANKA:", data.summary),
+                ("ZAHTEVE STRANKE:", data.client_requirements),
+                ("NASLEDNJI KORAKI IN ODGOVORNI:", data.action_items),
+                ("OSNUTEK FOLLOW-UP SPOROČILA:", data.follow_up_email)
+            ]
+
+            for title, content in sections:
+                text_object.setFont("Helvetica-Bold", 11)
+                text_object.textLine(title)
+                text_object.setFont("Helvetica", 10)
+                for line in content.split("\n"):
+                    text_object.textLine(line)
+                text_object.textLine("")
+
+            c.drawText(text_object)
+            c.save()
+            QMessageBox.information(self, "PDF Ustvarjen", f"Poročilo je shranjeno v:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Napaka", f"Generiranje PDF ni uspelo:\n{str(e)}")

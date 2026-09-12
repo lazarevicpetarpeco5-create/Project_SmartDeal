@@ -1,7 +1,7 @@
 # Virtual environment
 .venv/
 
-# Environment variables & local configuration with API keys (KRITIČNO)
+# Environment variables & local configuration with API keys
 .env
 .env.*
 config.json
